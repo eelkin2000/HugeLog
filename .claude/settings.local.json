@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-expo-app@latest . --template default)",
+      "Bash(npx create-expo-app@latest . --template default --yes)",
+      "Bash(npx create-expo-app@latest hugelog-temp --template default)",
+      "Bash(npx expo:*)",
+      "Bash(npm install:*)",
+      "Bash(ls \"D:/WorkoutApp/src/db/schema/\"*.ts)",
+      "Bash(npx tsc:*)",
+      "Bash(npm --version)",
+      "Bash(ls node_modules/expo/src/*.ts)",
+      "Bash(ls node_modules/expo/src/dom/global-events*)",
+      "Bash(npx kill-port:*)",
+      "Bash(ls /d/WorkoutApp/metro.config.*)",
+      "Bash(npm uninstall:*)",
+      "Bash(xargs grep:*)",
+      "Bash(xargs wc:*)",
+      "WebSearch",
+      "Bash(gh auth:*)"
+    ]
+  }
+}
