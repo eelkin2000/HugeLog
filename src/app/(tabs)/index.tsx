@@ -15,10 +15,17 @@ import { Button } from '@/ui/components/Button';
 import { HapticPressable } from '@/ui/components/HapticPressable';
 import { Badge } from '@/ui/components/Badge';
 import { db } from '@/db/client';
-import { workouts, sets, workoutExercises, personalRecords } from '@/db/schema';
+import { workouts, sets, workoutExercises, personalRecords, exercises } from '@/db/schema';
 import { desc, eq, sql, and, gte } from 'drizzle-orm';
 import { formatVolume, formatDuration, formatDate } from '@/utils/formatting';
 import { useAppStore } from '@/stores/appStore';
+
+const PR_TYPE_LABELS: Record<string, string> = {
+  weight: 'Best Weight',
+  reps: 'Most Reps',
+  volume: 'Best Volume',
+  estimated_1rm: 'Est. 1RM',
+};
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -28,7 +35,7 @@ export default function DashboardScreen() {
     workoutsThisWeek: 0,
     totalVolumeThisWeek: 0,
     currentStreak: 0,
-    recentPRs: [] as Array<{ exerciseName: string; type: string; value: number; achievedAt: string }>,
+    recentPRs: [] as Array<{ exerciseName: string; type: string; value: number; achievedAt: string; workoutId: string | null; workoutName: string | null }>,
     lastWorkout: null as { name: string; date: string; duration: number; volume: number } | null,
   });
 
@@ -85,9 +92,15 @@ export default function DashboardScreen() {
           type: personalRecords.type,
           value: personalRecords.value,
           achievedAt: personalRecords.achievedAt,
-          exerciseId: personalRecords.exerciseId,
+          exerciseName: exercises.name,
+          workoutId: workouts.id,
+          workoutName: workouts.name,
         })
         .from(personalRecords)
+        .innerJoin(exercises, eq(exercises.id, personalRecords.exerciseId))
+        .leftJoin(sets, eq(sets.id, personalRecords.setId))
+        .leftJoin(workoutExercises, eq(workoutExercises.id, sets.workoutExerciseId))
+        .leftJoin(workouts, eq(workouts.id, workoutExercises.workoutId))
         .where(gte(personalRecords.achievedAt, sevenDaysAgo.toISOString()))
         .orderBy(desc(personalRecords.achievedAt))
         .limit(5);
@@ -97,10 +110,12 @@ export default function DashboardScreen() {
         totalVolumeThisWeek: weekVolume,
         currentStreak: weekWorkouts.length > 0 ? 1 : 0, // Simplified for now
         recentPRs: recentPRsResult.map((pr) => ({
-          exerciseName: pr.exerciseId, // Will resolve to name later
+          exerciseName: pr.exerciseName,
           type: pr.type,
           value: pr.value,
           achievedAt: pr.achievedAt,
+          workoutId: pr.workoutId ?? null,
+          workoutName: pr.workoutName ?? null,
         })),
         lastWorkout,
       });
@@ -218,14 +233,28 @@ export default function DashboardScreen() {
           <>
             <Text style={styles.sectionTitle}>Recent PRs</Text>
             {stats.recentPRs.map((pr, i) => (
-              <Card key={i} style={styles.prCard} padding="sm">
-                <View style={styles.prRow}>
-                  <Badge label="PR" variant="success" />
-                  <Text style={styles.prText}>
-                    {pr.type} &middot; {pr.value} {unit}
-                  </Text>
-                </View>
-              </Card>
+              <HapticPressable
+                key={i}
+                onPress={() => pr.workoutId && router.push(`/workout/${pr.workoutId}`)}
+                disabled={!pr.workoutId}
+              >
+                <Card style={styles.prCard} padding="sm">
+                  <View style={styles.prRow}>
+                    <Badge label="PR" variant="success" />
+                    <View style={styles.prInfo}>
+                      <Text style={styles.prText}>
+                        {pr.exerciseName} &middot; {PR_TYPE_LABELS[pr.type] ?? pr.type}
+                      </Text>
+                      {pr.workoutName && (
+                        <Text style={styles.prSubText}>{pr.workoutName}</Text>
+                      )}
+                    </View>
+                    <Text style={styles.prValue}>
+                      {pr.type === 'reps' ? `${pr.value} reps` : `${pr.value} ${unit}`}
+                    </Text>
+                  </View>
+                </Card>
+              </HapticPressable>
             ))}
           </>
         )}
@@ -339,9 +368,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
+  prInfo: { flex: 1 },
   prText: {
     color: colors.text,
     fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+  },
+  prSubText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    marginTop: 1,
+  },
+  prValue: {
+    color: colors.success,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+    fontVariant: ['tabular-nums'],
   },
   emptySection: {
     alignItems: 'center',

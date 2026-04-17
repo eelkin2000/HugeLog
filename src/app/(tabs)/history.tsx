@@ -1,21 +1,24 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   ScrollView,
   View,
   Text,
   StyleSheet,
   RefreshControl,
+  Alert,
+  Animated as RNAnimated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { Swipeable } from 'react-native-gesture-handler';
 import { colors, spacing, fontSize, fontWeight, radius } from '@/ui/theme';
 import { Card } from '@/ui/components/Card';
 import { HapticPressable } from '@/ui/components/HapticPressable';
 import { EmptyState } from '@/ui/components/EmptyState';
 import { db } from '@/db/client';
-import { workouts } from '@/db/schema';
-import { desc, sql, and, gte, lt } from 'drizzle-orm';
+import { workouts, workoutExercises, sets } from '@/db/schema';
+import { desc, sql, and, gte, lt, eq, inArray } from 'drizzle-orm';
 import { formatDate, formatDuration, formatVolume } from '@/utils/formatting';
 import { useAppStore } from '@/stores/appStore';
 
@@ -27,6 +30,92 @@ interface WorkoutSummary {
   totalVolume: number;
 }
 
+// ── Swipeable workout row ─────────────────────────────────────────
+
+interface SwipeableWorkoutCardProps {
+  workout: WorkoutSummary;
+  unit: string;
+  onPress: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+function SwipeableWorkoutCard({
+  workout: w,
+  unit,
+  onPress,
+  onEdit,
+  onDelete,
+}: SwipeableWorkoutCardProps) {
+  const swipeableRef = useRef<Swipeable>(null);
+
+  const renderRightActions = (
+    _progress: RNAnimated.AnimatedInterpolation<number>,
+    dragX: RNAnimated.AnimatedInterpolation<number>
+  ) => {
+    const translateX = dragX.interpolate({
+      inputRange: [-160, 0],
+      outputRange: [0, 160],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <RNAnimated.View
+        style={[styles.swipeActions, { transform: [{ translateX }] }]}
+      >
+        <HapticPressable
+          hapticType="light"
+          onPress={() => {
+            swipeableRef.current?.close();
+            onEdit();
+          }}
+          style={styles.editAction}
+        >
+          <Ionicons name="pencil" size={18} color={colors.text} />
+          <Text style={styles.actionText}>Edit</Text>
+        </HapticPressable>
+
+        <HapticPressable
+          hapticType="heavy"
+          onPress={() => {
+            swipeableRef.current?.close();
+            onDelete();
+          }}
+          style={styles.deleteAction}
+        >
+          <Ionicons name="trash-outline" size={18} color={colors.text} />
+          <Text style={styles.actionText}>Delete</Text>
+        </HapticPressable>
+      </RNAnimated.View>
+    );
+  };
+
+  return (
+    <Swipeable
+      ref={swipeableRef}
+      renderRightActions={renderRightActions}
+      rightThreshold={40}
+      overshootRight={false}
+      friction={2}
+    >
+      <HapticPressable onPress={onPress}>
+        <Card style={styles.workoutCard} padding="md">
+          <Text style={styles.workoutName}>{w.name}</Text>
+          <View style={styles.workoutMeta}>
+            <Text style={styles.metaText}>{formatDate(w.startedAt)}</Text>
+            <Text style={styles.metaDot}>&middot;</Text>
+            <Text style={styles.metaText}>{formatDuration(w.durationSeconds)}</Text>
+            <Text style={styles.metaDot}>&middot;</Text>
+            <Text style={styles.metaText}>{formatVolume(w.totalVolume, unit)}</Text>
+          </View>
+        </Card>
+      </HapticPressable>
+    </Swipeable>
+  );
+}
+
+// ── Screen ────────────────────────────────────────────────────────
+
 export default function HistoryScreen() {
   const router = useRouter();
   const unit = useAppStore((s) => s.unit);
@@ -35,7 +124,7 @@ export default function HistoryScreen() {
   const [selectedMonth, setSelectedMonth] = useState(new Date());
   const [monthWorkouts, setMonthWorkouts] = useState<Map<string, string>>(new Map());
 
-  const loadMonthWorkouts = useCallback(async (monthDate: Date) => {
+  const loadMonthData = useCallback(async (monthDate: Date) => {
     try {
       const y = monthDate.getFullYear();
       const m = monthDate.getMonth();
@@ -43,7 +132,7 @@ export default function HistoryScreen() {
       const monthEnd = new Date(y, m + 1, 1).toISOString();
 
       const result = await db
-        .select({ id: workouts.id, startedAt: workouts.startedAt })
+        .select()
         .from(workouts)
         .where(
           and(
@@ -52,25 +141,7 @@ export default function HistoryScreen() {
             lt(workouts.startedAt, monthEnd)
           )
         )
-        .orderBy(workouts.startedAt);
-
-      const map = new Map<string, string>();
-      for (const w of result) {
-        const dateKey = w.startedAt.split('T')[0];
-        if (!map.has(dateKey)) map.set(dateKey, w.id);
-      }
-      setMonthWorkouts(map);
-    } catch {}
-  }, []);
-
-  const loadWorkouts = useCallback(async () => {
-    try {
-      const result = await db
-        .select()
-        .from(workouts)
-        .where(sql`${workouts.completedAt} IS NOT NULL`)
-        .orderBy(desc(workouts.startedAt))
-        .limit(50);
+        .orderBy(desc(workouts.startedAt));
 
       setWorkoutList(
         result.map((w) => ({
@@ -81,40 +152,65 @@ export default function HistoryScreen() {
           totalVolume: w.totalVolume || 0,
         }))
       );
-    } catch {
-      // DB not ready
-    }
+
+      const map = new Map<string, string>();
+      for (const w of result) {
+        const dateKey = w.startedAt.split('T')[0];
+        if (!map.has(dateKey)) map.set(dateKey, w.id);
+      }
+      setMonthWorkouts(map);
+    } catch {}
   }, []);
 
   useEffect(() => {
-    loadWorkouts();
-  }, [loadWorkouts]);
-
-  useEffect(() => {
-    loadMonthWorkouts(selectedMonth);
-  }, [selectedMonth, loadMonthWorkouts]);
+    loadMonthData(selectedMonth);
+  }, [selectedMonth, loadMonthData]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadWorkouts();
+    await loadMonthData(selectedMonth);
     setRefreshing(false);
   };
 
-  // Simple calendar header
+  const handleDelete = useCallback(
+    (w: WorkoutSummary) => {
+      Alert.alert(
+        'Delete Workout',
+        `Delete "${w.name}"? This cannot be undone.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const weRows = await db
+                  .select({ id: workoutExercises.id })
+                  .from(workoutExercises)
+                  .where(eq(workoutExercises.workoutId, w.id));
+
+                if (weRows.length > 0) {
+                  await db.delete(sets).where(
+                    inArray(sets.workoutExerciseId, weRows.map((r) => r.id))
+                  );
+                }
+                await db.delete(workoutExercises).where(eq(workoutExercises.workoutId, w.id));
+                await db.delete(workouts).where(eq(workouts.id, w.id));
+                await loadMonthData(selectedMonth);
+              } catch {}
+            },
+          },
+        ]
+      );
+    },
+    [selectedMonth, loadMonthData]
+  );
+
+  // Calendar helpers
   const monthName = selectedMonth.toLocaleString('en-US', {
     month: 'long',
     year: 'numeric',
   });
-
-  // Map dates to workout IDs for calendar taps (first workout of the day)
-  const workoutsByDate = new Map<string, string>();
-  for (const w of workoutList) {
-    const dateKey = w.startedAt.split('T')[0];
-    if (!workoutsByDate.has(dateKey)) workoutsByDate.set(dateKey, w.id);
-  }
-  const workoutDates = new Set(workoutsByDate.keys());
-
-  // Generate calendar days
   const year = selectedMonth.getFullYear();
   const month = selectedMonth.getMonth();
   const firstDay = new Date(year, month, 1).getDay();
@@ -163,14 +259,12 @@ export default function HistoryScreen() {
             </HapticPressable>
           </View>
 
-          {/* Day labels */}
           <View style={styles.dayLabels}>
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
               <Text key={d} style={styles.dayLabel}>{d}</Text>
             ))}
           </View>
 
-          {/* Calendar grid */}
           <View style={styles.calendarGrid}>
             {calendarDays.map((day, i) => {
               if (day === null) {
@@ -179,31 +273,7 @@ export default function HistoryScreen() {
 
               const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
               const hasWorkout = monthWorkouts.has(dateStr);
-              const isToday =
-                new Date().toISOString().split('T')[0] === dateStr;
-
-              const dayContent = (
-                <View key={day} style={styles.dayCell}>
-                  <View
-                    style={[
-                      styles.dayNumber,
-                      isToday && styles.todayNumber,
-                      hasWorkout && styles.workoutDay,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.dayText,
-                        isToday && styles.todayText,
-                        hasWorkout && styles.workoutDayText,
-                      ]}
-                    >
-                      {day}
-                    </Text>
-                  </View>
-                  {hasWorkout && <View style={styles.dot} />}
-                </View>
-              );
+              const isToday = new Date().toISOString().split('T')[0] === dateStr;
 
               if (hasWorkout) {
                 return (
@@ -216,20 +286,8 @@ export default function HistoryScreen() {
                     style={{ width: '14.28%' }}
                   >
                     <View style={[styles.dayCell, { width: '100%' }]}>
-                      <View
-                        style={[
-                          styles.dayNumber,
-                          isToday && styles.todayNumber,
-                          hasWorkout && styles.workoutDay,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.dayText,
-                            isToday && styles.todayText,
-                            hasWorkout && styles.workoutDayText,
-                          ]}
-                        >
+                      <View style={[styles.dayNumber, isToday && styles.todayNumber, styles.workoutDay]}>
+                        <Text style={[styles.dayText, isToday && styles.todayText, styles.workoutDayText]}>
                           {day}
                         </Text>
                       </View>
@@ -239,13 +297,19 @@ export default function HistoryScreen() {
                 );
               }
 
-              return dayContent;
+              return (
+                <View key={day} style={styles.dayCell}>
+                  <View style={[styles.dayNumber, isToday && styles.todayNumber]}>
+                    <Text style={[styles.dayText, isToday && styles.todayText]}>{day}</Text>
+                  </View>
+                </View>
+              );
             })}
           </View>
         </Card>
 
         {/* Workout List */}
-        <Text style={styles.sectionTitle}>Recent Workouts</Text>
+        <Text style={styles.sectionTitle}>Workouts in {monthName}</Text>
 
         {workoutList.length === 0 ? (
           <EmptyState
@@ -255,25 +319,14 @@ export default function HistoryScreen() {
           />
         ) : (
           workoutList.map((w) => (
-            <HapticPressable
+            <SwipeableWorkoutCard
               key={w.id}
+              workout={w}
+              unit={unit}
               onPress={() => router.push(`/workout/${w.id}`)}
-            >
-              <Card style={styles.workoutCard} padding="md">
-                <Text style={styles.workoutName}>{w.name}</Text>
-                <View style={styles.workoutMeta}>
-                  <Text style={styles.metaText}>{formatDate(w.startedAt)}</Text>
-                  <Text style={styles.metaDot}>&middot;</Text>
-                  <Text style={styles.metaText}>
-                    {formatDuration(w.durationSeconds)}
-                  </Text>
-                  <Text style={styles.metaDot}>&middot;</Text>
-                  <Text style={styles.metaText}>
-                    {formatVolume(w.totalVolume, unit)}
-                  </Text>
-                </View>
-              </Card>
-            </HapticPressable>
+              onEdit={() => router.push(`/workout/${w.id}?edit=1`)}
+              onDelete={() => handleDelete(w)}
+            />
           ))
         )}
       </ScrollView>
@@ -291,6 +344,8 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.bold,
     marginBottom: spacing.md,
   },
+
+  // Calendar
   calendar: { marginBottom: spacing.lg },
   calendarHeader: {
     flexDirection: 'row',
@@ -303,25 +358,10 @@ const styles = StyleSheet.create({
     fontSize: fontSize.lg,
     fontWeight: fontWeight.semibold,
   },
-  dayLabels: {
-    flexDirection: 'row',
-    marginBottom: spacing.xs,
-  },
-  dayLabel: {
-    flex: 1,
-    textAlign: 'center',
-    color: colors.textMuted,
-    fontSize: fontSize.xs,
-  },
-  calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  dayCell: {
-    width: '14.28%',
-    alignItems: 'center',
-    paddingVertical: spacing.xs,
-  },
+  dayLabels: { flexDirection: 'row', marginBottom: spacing.xs },
+  dayLabel: { flex: 1, textAlign: 'center', color: colors.textMuted, fontSize: fontSize.xs },
+  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  dayCell: { width: '14.28%', alignItems: 'center', paddingVertical: spacing.xs },
   dayNumber: {
     width: 32,
     height: 32,
@@ -329,25 +369,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dayText: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-  },
-  todayNumber: {
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
-  todayText: {
-    color: colors.primary,
-    fontWeight: fontWeight.semibold,
-  },
-  workoutDay: {
-    backgroundColor: colors.primaryMuted,
-  },
-  workoutDayText: {
-    color: colors.primary,
-    fontWeight: fontWeight.semibold,
-  },
+  dayText: { color: colors.textSecondary, fontSize: fontSize.sm },
+  todayNumber: { borderWidth: 1, borderColor: colors.primary },
+  todayText: { color: colors.primary, fontWeight: fontWeight.semibold },
+  workoutDay: { backgroundColor: colors.primaryMuted },
+  workoutDayText: { color: colors.primary, fontWeight: fontWeight.semibold },
   dot: {
     width: 4,
     height: 4,
@@ -355,6 +381,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     marginTop: 2,
   },
+
+  // Workout list
   sectionTitle: {
     color: colors.text,
     fontSize: fontSize.lg,
@@ -362,16 +390,38 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   workoutCard: { marginBottom: spacing.sm },
-  workoutName: {
-    color: colors.text,
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.semibold,
-  },
-  workoutMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: spacing.xs,
-  },
+  workoutName: { color: colors.text, fontSize: fontSize.md, fontWeight: fontWeight.semibold },
+  workoutMeta: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.xs },
   metaText: { color: colors.textSecondary, fontSize: fontSize.sm },
   metaDot: { color: colors.textMuted, marginHorizontal: spacing.xs },
+
+  // Swipe actions
+  swipeActions: {
+    flexDirection: 'row',
+    width: 160,
+    marginBottom: spacing.sm,
+  },
+  editAction: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    borderRadius: radius.sm,
+    marginRight: 2,
+  },
+  deleteAction: {
+    flex: 1,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    borderRadius: radius.sm,
+    marginLeft: 2,
+  },
+  actionText: {
+    color: colors.text,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+  },
 });

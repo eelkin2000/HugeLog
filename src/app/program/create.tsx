@@ -15,41 +15,79 @@ import { colors, spacing, fontSize, fontWeight, radius } from '@/ui/theme';
 import { Card } from '@/ui/components/Card';
 import { Button } from '@/ui/components/Button';
 import { HapticPressable } from '@/ui/components/HapticPressable';
-import { NumericInput } from '@/ui/components/NumericInput';
 import { db } from '@/db/client';
-import { programs } from '@/db/schema';
+import { programs, programDays } from '@/db/schema';
+
+interface WorkoutDay {
+  id: string;
+  name: string;
+}
 
 export default function CreateProgramScreen() {
   const router = useRouter();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [numWeeks, setNumWeeks] = useState<number | null>(4);
-  const [daysPerWeek, setDaysPerWeek] = useState<number | null>(4);
-  const [difficulty, setDifficulty] = useState<string>('intermediate');
+  const [days, setDays] = useState<WorkoutDay[]>([
+    { id: uuid(), name: 'Day 1' },
+  ]);
+
+  const addDay = () => {
+    setDays((prev) => [
+      ...prev,
+      { id: uuid(), name: `Day ${prev.length + 1}` },
+    ]);
+  };
+
+  const removeDay = (id: string) => {
+    if (days.length <= 1) {
+      Alert.alert('Error', 'A program needs at least one workout day');
+      return;
+    }
+    setDays((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const updateDayName = (id: string, newName: string) => {
+    setDays((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, name: newName } : d))
+    );
+  };
 
   const handleCreate = async () => {
     if (!name.trim()) {
       Alert.alert('Error', 'Please enter a program name');
       return;
     }
-    if (!numWeeks || !daysPerWeek) {
-      Alert.alert('Error', 'Please set weeks and days per week');
+
+    const hasEmptyDay = days.some((d) => !d.name.trim());
+    if (hasEmptyDay) {
+      Alert.alert('Error', 'All workout days need a name');
       return;
     }
 
-    const id = uuid();
+    const programId = uuid();
     await db.insert(programs).values({
-      id,
+      id: programId,
       name: name.trim(),
       description: description.trim() || null,
-      numWeeks,
-      daysPerWeek,
-      difficulty,
+      numWeeks: 1,
+      daysPerWeek: days.length,
+      difficulty: null,
       isBuiltIn: 0,
       createdAt: new Date().toISOString(),
     });
 
-    router.replace(`/program/${id}`);
+    // Create program days
+    for (let i = 0; i < days.length; i++) {
+      await db.insert(programDays).values({
+        id: days[i].id,
+        programId,
+        weekNumber: 1,
+        dayNumber: i + 1,
+        name: days[i].name.trim(),
+      });
+    }
+
+    router.replace(`/program/${programId}`);
   };
 
   return (
@@ -58,8 +96,8 @@ export default function CreateProgramScreen() {
         <HapticPressable onPress={() => router.back()}>
           <Ionicons name="close" size={28} color={colors.text} />
         </HapticPressable>
-        <Text style={styles.headerTitle}>Create Program</Text>
-        <Button title="Save" onPress={handleCreate} size="sm" />
+        <Text style={styles.headerTitle}>New Program</Text>
+        <Button title="Create" onPress={handleCreate} size="sm" />
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -69,8 +107,9 @@ export default function CreateProgramScreen() {
           style={styles.textInput}
           value={name}
           onChangeText={setName}
-          placeholder="e.g., My PPL Split"
+          placeholder="e.g., Push Pull Legs"
           placeholderTextColor={colors.textMuted}
+          autoFocus
         />
 
         {/* Description */}
@@ -79,64 +118,62 @@ export default function CreateProgramScreen() {
           style={[styles.textInput, styles.multilineInput]}
           value={description}
           onChangeText={setDescription}
-          placeholder="Describe your program..."
+          placeholder="What's this program about?"
           placeholderTextColor={colors.textMuted}
           multiline
-          numberOfLines={3}
+          numberOfLines={2}
         />
 
-        {/* Duration */}
-        <Text style={styles.label}>Number of Weeks</Text>
-        <NumericInput
-          value={numWeeks}
-          onChangeValue={setNumWeeks}
-          step={1}
-          min={1}
-          max={52}
-          style={styles.numericInput}
-        />
-
-        <Text style={styles.label}>Days Per Week</Text>
-        <NumericInput
-          value={daysPerWeek}
-          onChangeValue={setDaysPerWeek}
-          step={1}
-          min={1}
-          max={7}
-          style={styles.numericInput}
-        />
-
-        {/* Difficulty */}
-        <Text style={styles.label}>Difficulty</Text>
-        <View style={styles.difficultyRow}>
-          {['beginner', 'intermediate', 'advanced'].map((d) => (
-            <HapticPressable
-              key={d}
-              onPress={() => setDifficulty(d)}
-            >
-              <View
-                style={[
-                  styles.difficultyChip,
-                  difficulty === d && styles.difficultyChipActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.difficultyText,
-                    difficulty === d && styles.difficultyTextActive,
-                  ]}
-                >
-                  {d}
-                </Text>
-              </View>
-            </HapticPressable>
-          ))}
+        {/* Workout Days */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Workout Days</Text>
+          <Text style={styles.sectionSubtitle}>
+            Define the days in your rotation
+          </Text>
         </View>
 
+        {days.map((day, index) => (
+          <Card key={day.id} style={styles.dayCard} padding="sm">
+            <View style={styles.dayRow}>
+              <View style={styles.dayNumber}>
+                <Text style={styles.dayNumberText}>{index + 1}</Text>
+              </View>
+              <TextInput
+                style={styles.dayNameInput}
+                value={day.name}
+                onChangeText={(text) => updateDayName(day.id, text)}
+                placeholder="Day name..."
+                placeholderTextColor={colors.textMuted}
+              />
+              {days.length > 1 && (
+                <HapticPressable onPress={() => removeDay(day.id)}>
+                  <Ionicons
+                    name="trash-outline"
+                    size={20}
+                    color={colors.danger}
+                  />
+                </HapticPressable>
+              )}
+            </View>
+          </Card>
+        ))}
+
+        <HapticPressable onPress={addDay}>
+          <View style={styles.addDayButton}>
+            <Ionicons name="add-circle-outline" size={22} color={colors.primary} />
+            <Text style={styles.addDayText}>Add Workout Day</Text>
+          </View>
+        </HapticPressable>
+
         <Card style={styles.infoCard} padding="md">
-          <Ionicons name="information-circle-outline" size={20} color={colors.textSecondary} />
+          <Ionicons
+            name="information-circle-outline"
+            size={20}
+            color={colors.textSecondary}
+          />
           <Text style={styles.infoText}>
-            After creating the program, you can add exercises to each day from the program detail screen.
+            After creating the program, you'll be able to add exercises to each
+            workout day.
           </Text>
         </Card>
       </ScrollView>
@@ -177,37 +214,66 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
   },
   multilineInput: {
-    minHeight: 80,
+    minHeight: 60,
     textAlignVertical: 'top',
   },
-  numericInput: {
-    alignSelf: 'flex-start',
-    minWidth: 160,
+  sectionHeader: {
+    marginTop: spacing.xl,
+    marginBottom: spacing.md,
   },
-  difficultyRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
+  sectionTitle: {
+    color: colors.text,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.semibold,
   },
-  difficultyChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  difficultyChipActive: {
-    backgroundColor: colors.primaryMuted,
-    borderColor: colors.primary,
-  },
-  difficultyText: {
+  sectionSubtitle: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,
-    textTransform: 'capitalize',
+    marginTop: spacing.xs,
   },
-  difficultyTextActive: {
+  dayCard: {
+    marginBottom: spacing.sm,
+  },
+  dayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  dayNumber: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.primaryMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayNumberText: {
     color: colors.primary,
-    fontWeight: fontWeight.semibold,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+  },
+  dayNameInput: {
+    flex: 1,
+    color: colors.text,
+    fontSize: fontSize.md,
+    paddingVertical: spacing.xs,
+  },
+  addDayButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderStyle: 'dashed',
+    marginTop: spacing.xs,
+  },
+  addDayText: {
+    color: colors.primary,
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.medium,
   },
   infoCard: {
     marginTop: spacing.xl,

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   FlatList,
   View,
@@ -7,7 +7,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { generateId as uuid } from '@/utils/id';
@@ -50,17 +50,28 @@ const MUSCLE_FILTERS: MuscleGroup[] = [
 
 export default function ExerciseBrowseScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    returnTo?: string;
+    workoutId?: string;
+  }>();
   const isActive = useActiveWorkoutStore((s) => s.isActive);
   const workoutId = useActiveWorkoutStore((s) => s.workoutId);
+  const isEditMode = params.returnTo === 'editWorkout' && !!params.workoutId;
+  const isAddMode = isActive || isEditMode;
   const [allExercises, setAllExercises] = useState<ExerciseItem[]>([]);
   const [search, setSearch] = useState('');
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleGroup | null>(
     null
   );
+  // Maps exerciseId -> workoutExerciseId (so we can undo an add)
+  const [addedMap, setAddedMap] = useState<Map<string, string>>(new Map());
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadExercises();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadExercises();
+    }, [])
+  );
 
   const loadExercises = async () => {
     try {
@@ -100,125 +111,229 @@ export default function ExerciseBrowseScreen() {
     return list;
   }, [allExercises, search, selectedMuscle]);
 
-  const handleSelect = async (exercise: ExerciseItem) => {
-    if (isActive && workoutId) {
-      const store = useActiveWorkoutStore.getState();
-      const weId = uuid();
-
-      // Query last session's sets for auto-populate
-      let previousSets: Array<{ weight: number | null; reps: number | null }> =
-        [];
-      try {
-        const lastSets = await db
-          .select({ weight: sets.weight, reps: sets.reps })
-          .from(sets)
-          .innerJoin(
-            workoutExercises,
-            eq(sets.workoutExerciseId, workoutExercises.id)
-          )
-          .innerJoin(workouts, eq(workoutExercises.workoutId, workouts.id))
-          .where(
-            and(
-              eq(workoutExercises.exerciseId, exercise.id),
-              eq(sets.isCompleted, 1),
-              sql`${workouts.completedAt} IS NOT NULL`,
-              sql`${workouts.id} != ${workoutId}`
-            )
-          )
-          .orderBy(desc(workouts.startedAt), sets.setNumber)
-          .limit(10);
-
-        if (lastSets.length > 0) {
-          previousSets = lastSets;
-        }
-      } catch {}
-
-      // Build sets (from previous or 3 empty)
-      const defaultSets =
-        previousSets.length > 0
-          ? previousSets.map((ps, i) => ({
-              id: uuid(),
-              setNumber: i + 1,
-              type: 'working' as const,
-              weight: ps.weight,
-              reps: ps.reps,
-              rpe: null,
-              isCompleted: false,
-              isPersonalRecord: false,
-            }))
-          : [1, 2, 3].map((n) => ({
-              id: uuid(),
-              setNumber: n,
-              type: 'working' as const,
-              weight: null,
-              reps: null,
-              rpe: null,
-              isCompleted: false,
-              isPersonalRecord: false,
-            }));
-
-      // Update store
-      store.addExercise({
-        id: weId,
-        exerciseId: exercise.id,
-        exerciseName: exercise.name,
-        sortOrder: store.exercises.length,
-        sets: defaultSets,
-        restSeconds: null,
-        notes: '',
-      });
-
-      // Persist to DB
-      await db.insert(workoutExercises).values({
-        id: weId,
-        workoutId,
-        exerciseId: exercise.id,
-        sortOrder: store.exercises.length - 1,
-      });
-
-      for (const s of defaultSets) {
-        await db.insert(sets).values({
-          id: s.id,
-          workoutExerciseId: weId,
-          setNumber: s.setNumber,
-          type: s.type,
-          weight: s.weight,
-          reps: s.reps,
-        });
+  const handleUndoAdd = async (exerciseId: string) => {
+    const weId = addedMap.get(exerciseId);
+    if (!weId) return;
+    if (busyId === exerciseId) return;
+    setBusyId(exerciseId);
+    try {
+      // Active workout: remove from store
+      if (isActive) {
+        const store = useActiveWorkoutStore.getState();
+        store.removeExercise(weId);
       }
+      // Remove from DB (both active and edit modes)
+      await db.delete(sets).where(eq(sets.workoutExerciseId, weId));
+      await db.delete(workoutExercises).where(eq(workoutExercises.id, weId));
 
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      router.back();
-    } else {
-      router.push(`/exercise/${exercise.id}`);
+      setAddedMap((prev) => {
+        const next = new Map(prev);
+        next.delete(exerciseId);
+        return next;
+      });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const renderItem = ({ item }: { item: ExerciseItem }) => (
-    <HapticPressable onPress={() => handleSelect(item)}>
-      <View style={styles.exerciseRow}>
-        <View style={styles.exerciseInfo}>
-          <Text style={styles.exerciseName}>{item.name}</Text>
-          <Text style={styles.exerciseMeta}>
-            {MUSCLE_GROUP_LABELS[item.primaryMuscle as MuscleGroup] ||
-              item.primaryMuscle}
-            {item.equipment && ` · ${item.equipment}`}
-          </Text>
-        </View>
-        {isActive ? (
-          <View style={styles.addIcon}>
-            <Ionicons name="add" size={20} color={colors.text} />
+  const handleSelect = async (exercise: ExerciseItem) => {
+    // Browse-only mode: navigate to detail
+    if (!isAddMode) {
+      router.push(`/exercise/${exercise.id}`);
+      return;
+    }
+
+    // Already added? Toggle off.
+    if (addedMap.has(exercise.id)) {
+      await handleUndoAdd(exercise.id);
+      return;
+    }
+
+    // Prevent double-tap
+    if (busyId === exercise.id) return;
+    setBusyId(exercise.id);
+
+    let createdWeId: string | null = null;
+
+    try {
+      // Adding exercise to a completed workout being edited
+      if (isEditMode && params.workoutId) {
+        const editWorkoutId = params.workoutId;
+        const weId = uuid();
+        createdWeId = weId;
+
+        const existingExercises = await db
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(workoutExercises)
+          .where(eq(workoutExercises.workoutId, editWorkoutId));
+        const sortOrder = (existingExercises[0]?.count ?? 0) + addedMap.size;
+
+        let previousSets: Array<{ weight: number | null; reps: number | null }> = [];
+        try {
+          const lastSets = await db
+            .select({ weight: sets.weight, reps: sets.reps })
+            .from(sets)
+            .innerJoin(workoutExercises, eq(sets.workoutExerciseId, workoutExercises.id))
+            .innerJoin(workouts, eq(workoutExercises.workoutId, workouts.id))
+            .where(
+              and(
+                eq(workoutExercises.exerciseId, exercise.id),
+                eq(sets.isCompleted, 1),
+                sql`${workouts.completedAt} IS NOT NULL`,
+                sql`${workouts.id} != ${editWorkoutId}`
+              )
+            )
+            .orderBy(desc(workouts.startedAt), sets.setNumber)
+            .limit(10);
+          if (lastSets.length > 0) previousSets = lastSets;
+        } catch {}
+
+        const defaultSets = previousSets.length > 0
+          ? previousSets.map((ps, i) => ({
+              id: uuid(), setNumber: i + 1, type: 'working' as const,
+              weight: ps.weight, reps: ps.reps,
+            }))
+          : [1, 2, 3].map((n) => ({
+              id: uuid(), setNumber: n, type: 'working' as const,
+              weight: null, reps: null,
+            }));
+
+        await db.insert(workoutExercises).values({
+          id: weId,
+          workoutId: editWorkoutId,
+          exerciseId: exercise.id,
+          sortOrder,
+        });
+
+        for (const s of defaultSets) {
+          await db.insert(sets).values({
+            id: s.id,
+            workoutExerciseId: weId,
+            setNumber: s.setNumber,
+            type: s.type,
+            weight: s.weight,
+            reps: s.reps,
+            isCompleted: 1,
+          });
+        }
+      }
+
+      // Adding exercise to an active workout
+      if (isActive && workoutId) {
+        const store = useActiveWorkoutStore.getState();
+        const weId = uuid();
+        createdWeId = weId;
+
+        let previousSets: Array<{ weight: number | null; reps: number | null }> = [];
+        try {
+          const lastSets = await db
+            .select({ weight: sets.weight, reps: sets.reps })
+            .from(sets)
+            .innerJoin(workoutExercises, eq(sets.workoutExerciseId, workoutExercises.id))
+            .innerJoin(workouts, eq(workoutExercises.workoutId, workouts.id))
+            .where(
+              and(
+                eq(workoutExercises.exerciseId, exercise.id),
+                eq(sets.isCompleted, 1),
+                sql`${workouts.completedAt} IS NOT NULL`,
+                sql`${workouts.id} != ${workoutId}`
+              )
+            )
+            .orderBy(desc(workouts.startedAt), sets.setNumber)
+            .limit(10);
+          if (lastSets.length > 0) previousSets = lastSets;
+        } catch {}
+
+        const defaultSets = previousSets.length > 0
+          ? previousSets.map((ps, i) => ({
+              id: uuid(), setNumber: i + 1, type: 'working' as const,
+              weight: ps.weight, reps: ps.reps, rpe: null,
+              isCompleted: false, isPersonalRecord: false,
+            }))
+          : [1, 2, 3].map((n) => ({
+              id: uuid(), setNumber: n, type: 'working' as const,
+              weight: null, reps: null, rpe: null,
+              isCompleted: false, isPersonalRecord: false,
+            }));
+
+        store.addExercise({
+          id: weId,
+          exerciseId: exercise.id,
+          exerciseName: exercise.name,
+          sortOrder: store.exercises.length,
+          sets: defaultSets,
+          restSeconds: null,
+          notes: '',
+        });
+
+        await db.insert(workoutExercises).values({
+          id: weId,
+          workoutId,
+          exerciseId: exercise.id,
+          sortOrder: store.exercises.length - 1,
+        });
+
+        for (const s of defaultSets) {
+          await db.insert(sets).values({
+            id: s.id,
+            workoutExerciseId: weId,
+            setNumber: s.setNumber,
+            type: s.type,
+            weight: s.weight,
+            reps: s.reps,
+          });
+        }
+      }
+
+      if (createdWeId) {
+        const finalWeId = createdWeId;
+        setAddedMap((prev) => {
+          const next = new Map(prev);
+          next.set(exercise.id, finalWeId);
+          return next;
+        });
+      }
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const renderItem = ({ item }: { item: ExerciseItem }) => {
+    const wasAdded = addedMap.has(item.id);
+    return (
+      <HapticPressable onPress={() => handleSelect(item)}>
+        <View style={styles.exerciseRow}>
+          <View style={styles.exerciseInfo}>
+            <Text style={styles.exerciseName}>{item.name}</Text>
+            <Text style={styles.exerciseMeta}>
+              {MUSCLE_GROUP_LABELS[item.primaryMuscle as MuscleGroup] ||
+                item.primaryMuscle}
+              {item.equipment && ` · ${item.equipment}`}
+            </Text>
           </View>
-        ) : (
-          <Ionicons
-            name="chevron-forward"
-            size={20}
-            color={colors.textMuted}
-          />
-        )}
-      </View>
-    </HapticPressable>
-  );
+          {isAddMode ? (
+            wasAdded ? (
+              <View style={styles.addedIcon}>
+                <Ionicons name="checkmark" size={18} color={colors.text} />
+              </View>
+            ) : (
+              <View style={styles.addIcon}>
+                <Ionicons name="add" size={20} color={colors.text} />
+              </View>
+            )
+          ) : (
+            <Ionicons
+              name="chevron-forward"
+              size={20}
+              color={colors.textMuted}
+            />
+          )}
+        </View>
+      </HapticPressable>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -228,9 +343,21 @@ export default function ExerciseBrowseScreen() {
           <Ionicons name="close" size={28} color={colors.text} />
         </HapticPressable>
         <Text style={styles.title}>
-          {isActive ? 'Add Exercise' : 'Exercises'}
+          {isAddMode
+            ? addedMap.size > 0
+              ? `Add Exercise (${addedMap.size})`
+              : 'Add Exercise'
+            : 'Exercises'}
         </Text>
-        <View style={{ width: 28 }} />
+        {isAddMode && addedMap.size > 0 ? (
+          <HapticPressable onPress={() => router.back()}>
+            <Text style={styles.doneText}>Done</Text>
+          </HapticPressable>
+        ) : (
+          <HapticPressable onPress={() => router.push('/exercise/create')}>
+            <Ionicons name="add-circle-outline" size={28} color={colors.primary} />
+          </HapticPressable>
+        )}
       </View>
 
       {/* Search */}
@@ -256,36 +383,39 @@ export default function ExerciseBrowseScreen() {
       </View>
 
       {/* Muscle Group Filters */}
-      <FlatList
-        horizontal
-        data={MUSCLE_FILTERS}
-        keyExtractor={(item) => item}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterContainer}
-        renderItem={({ item }) => (
-          <HapticPressable
-            onPress={() =>
-              setSelectedMuscle(selectedMuscle === item ? null : item)
-            }
-          >
-            <View
-              style={[
-                styles.filterChip,
-                selectedMuscle === item && styles.filterChipActive,
-              ]}
+      <View style={styles.filterWrapper}>
+        <FlatList
+          horizontal
+          data={MUSCLE_FILTERS}
+          keyExtractor={(item) => item}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterContainer}
+          renderItem={({ item }) => (
+            <HapticPressable
+              onPress={() =>
+                setSelectedMuscle(selectedMuscle === item ? null : item)
+              }
             >
-              <Text
+              <View
                 style={[
-                  styles.filterText,
-                  selectedMuscle === item && styles.filterTextActive,
+                  styles.filterChip,
+                  selectedMuscle === item && styles.filterChipActive,
                 ]}
               >
-                {MUSCLE_GROUP_LABELS[item]}
-              </Text>
-            </View>
-          </HapticPressable>
-        )}
-      />
+                <Text
+                  style={[
+                    styles.filterText,
+                    selectedMuscle === item && styles.filterTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {MUSCLE_GROUP_LABELS[item]}
+                </Text>
+              </View>
+            </HapticPressable>
+          )}
+        />
+      </View>
 
       {/* Results count */}
       <View style={styles.resultsBar}>
@@ -349,19 +479,26 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
     paddingVertical: spacing.sm + 2,
   },
+  filterWrapper: {
+    minHeight: 56,
+    maxHeight: 56,
+  },
   filterContainer: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     gap: spacing.xs,
+    alignItems: 'center',
   },
   filterChip: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
+    height: 36,
     borderRadius: radius.full,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     marginRight: spacing.xs,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   filterChipActive: {
     backgroundColor: colors.primaryMuted,
@@ -370,6 +507,8 @@ const styles = StyleSheet.create({
   filterText: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,
+    includeFontPadding: false,
+    lineHeight: fontSize.sm + 4,
   },
   filterTextActive: {
     color: colors.primary,
@@ -403,11 +542,24 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     marginTop: 2,
   },
+  doneText: {
+    color: colors.primary,
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.semibold,
+  },
   addIcon: {
     width: 32,
     height: 32,
     borderRadius: 16,
     backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addedIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.success,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
-import { ScrollView, View, Text, StyleSheet } from 'react-native';
+import { useState, useCallback } from 'react';
+import { ScrollView, View, Text, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, fontSize, fontWeight, radius } from '@/ui/theme';
 import { Card } from '@/ui/components/Card';
@@ -10,70 +10,151 @@ import { HapticPressable } from '@/ui/components/HapticPressable';
 import { Badge } from '@/ui/components/Badge';
 import { EmptyState } from '@/ui/components/EmptyState';
 import { db } from '@/db/client';
-import { programs, programInstances } from '@/db/schema';
-import { desc, eq } from 'drizzle-orm';
+import {
+  programs,
+  programInstances,
+  programDays,
+  programExercises,
+  workouts,
+} from '@/db/schema';
+import { desc, eq, and, sql } from 'drizzle-orm';
 
 interface ProgramItem {
   id: string;
   name: string;
   description: string | null;
-  numWeeks: number;
   daysPerWeek: number;
-  difficulty: string | null;
-  isBuiltIn: number | null;
+  isActive: boolean;
+  currentDay: number;
+  instanceId: string | null;
+  totalWorkouts: number;
+  exerciseCount: number;
 }
 
 export default function ProgramsScreen() {
   const router = useRouter();
   const [programList, setProgramList] = useState<ProgramItem[]>([]);
-  const [activeProgram, setActiveProgram] = useState<{
-    programId: string;
-    programName: string;
-    currentWeek: number;
-    currentDay: number;
-  } | null>(null);
 
   const loadPrograms = useCallback(async () => {
     try {
-      const result = await db.select().from(programs).orderBy(desc(programs.createdAt));
-      setProgramList(result);
-
-      // Check for active program instance
-      const activeResult = await db
+      const result = await db
         .select()
-        .from(programInstances)
-        .where(eq(programInstances.isActive, 1))
-        .limit(1);
+        .from(programs)
+        .orderBy(desc(programs.createdAt));
 
-      if (activeResult.length > 0) {
-        const instance = activeResult[0];
-        const prog = result.find((p) => p.id === instance.programId);
-        if (prog) {
-          setActiveProgram({
-            programId: prog.id,
-            programName: prog.name,
-            currentWeek: instance.currentWeek || 1,
-            currentDay: instance.currentDay || 1,
-          });
+      const items: ProgramItem[] = [];
+      for (const prog of result) {
+        // Check for active instance
+        const instances = await db
+          .select()
+          .from(programInstances)
+          .where(
+            and(
+              eq(programInstances.programId, prog.id),
+              eq(programInstances.isActive, 1)
+            )
+          )
+          .limit(1);
+
+        let totalWorkouts = 0;
+        if (instances.length > 0) {
+          const countResult = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(workouts)
+            .where(
+              and(
+                eq(workouts.programInstanceId, instances[0].id),
+                sql`${workouts.completedAt} IS NOT NULL`
+              )
+            );
+          totalWorkouts = countResult[0]?.count || 0;
         }
+
+        // Count total exercises across all days
+        const daysList = await db
+          .select({ id: programDays.id })
+          .from(programDays)
+          .where(eq(programDays.programId, prog.id));
+
+        let exerciseCount = 0;
+        for (const day of daysList) {
+          const exCount = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(programExercises)
+            .where(eq(programExercises.programDayId, day.id));
+          exerciseCount += exCount[0]?.count || 0;
+        }
+
+        items.push({
+          id: prog.id,
+          name: prog.name,
+          description: prog.description,
+          daysPerWeek: prog.daysPerWeek,
+          isActive: instances.length > 0,
+          currentDay: instances[0]?.currentDay || 1,
+          instanceId: instances[0]?.id || null,
+          totalWorkouts,
+          exerciseCount,
+        });
       }
-    } catch {
-      // DB not ready
-    }
+
+      setProgramList(items);
+    } catch {}
   }, []);
 
-  useEffect(() => {
-    loadPrograms();
-  }, [loadPrograms]);
+  useFocusEffect(
+    useCallback(() => {
+      loadPrograms();
+    }, [loadPrograms])
+  );
 
-  const getDifficultyVariant = (d: string | null) => {
-    switch (d) {
-      case 'beginner': return 'success' as const;
-      case 'intermediate': return 'warning' as const;
-      case 'advanced': return 'danger' as const;
-      default: return 'muted' as const;
-    }
+  const handleDeleteProgram = (prog: ProgramItem) => {
+    Alert.alert(
+      'Delete Program',
+      `Delete "${prog.name}"? Completed workouts will be kept.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            // Deactivate instances
+            const instances = await db
+              .select()
+              .from(programInstances)
+              .where(eq(programInstances.programId, prog.id));
+            for (const inst of instances) {
+              await db
+                .update(programInstances)
+                .set({ isActive: 0 })
+                .where(eq(programInstances.id, inst.id));
+            }
+
+            // Delete exercises for each day
+            const daysList = await db
+              .select()
+              .from(programDays)
+              .where(eq(programDays.programId, prog.id));
+            for (const day of daysList) {
+              await db
+                .delete(programExercises)
+                .where(eq(programExercises.programDayId, day.id));
+            }
+
+            // Delete days and program
+            await db
+              .delete(programDays)
+              .where(eq(programDays.programId, prog.id));
+            await db.delete(programs).where(eq(programs.id, prog.id));
+
+            loadPrograms();
+          },
+        },
+      ]
+    );
   };
+
+  const activeProgram = programList.find((p) => p.isActive);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -84,7 +165,7 @@ export default function ProgramsScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>Programs</Text>
           <Button
-            title="Create"
+            title="New"
             onPress={() => router.push('/program/create')}
             variant="secondary"
             size="sm"
@@ -94,74 +175,110 @@ export default function ProgramsScreen() {
         {/* Active Program Banner */}
         {activeProgram && (
           <HapticPressable
-            onPress={() => router.push(`/program/${activeProgram.programId}`)}
+            onPress={() => router.push(`/program/${activeProgram.id}`)}
           >
             <Card style={styles.activeCard} variant="elevated" padding="lg">
               <View style={styles.activeHeader}>
                 <Badge label="ACTIVE" variant="success" />
+                <Text style={styles.activeWorkouts}>
+                  {activeProgram.totalWorkouts} workout
+                  {activeProgram.totalWorkouts !== 1 ? 's' : ''} completed
+                </Text>
               </View>
-              <Text style={styles.activeName}>{activeProgram.programName}</Text>
+              <Text style={styles.activeName}>{activeProgram.name}</Text>
               <Text style={styles.activeProgress}>
-                Week {activeProgram.currentWeek} &middot; Day{' '}
-                {activeProgram.currentDay}
+                Day {activeProgram.currentDay} of {activeProgram.daysPerWeek}
               </Text>
               <Button
-                title="Continue Workout"
-                onPress={() => router.push('/workout/active')}
+                title="View Program"
+                onPress={() => router.push(`/program/${activeProgram.id}`)}
                 fullWidth
-                style={styles.continueButton}
+                style={styles.viewButton}
               />
             </Card>
           </HapticPressable>
         )}
 
         {/* Program List */}
-        <Text style={styles.sectionTitle}>
-          {programList.some((p) => p.isBuiltIn) ? 'Built-in Programs' : 'All Programs'}
-        </Text>
-
         {programList.length === 0 ? (
           <EmptyState
             icon="clipboard-outline"
             title="No programs yet"
-            description="Create a custom program or browse built-in ones"
+            description="Create a program to organize your workouts into a structured routine"
             actionLabel="Create Program"
             onAction={() => router.push('/program/create')}
           />
         ) : (
-          programList.map((prog) => (
-            <HapticPressable
-              key={prog.id}
-              onPress={() => router.push(`/program/${prog.id}`)}
-            >
-              <Card style={styles.programCard} padding="md">
-                <View style={styles.programHeader}>
-                  <Text style={styles.programName}>{prog.name}</Text>
-                  {prog.difficulty && (
-                    <Badge
-                      label={prog.difficulty}
-                      variant={getDifficultyVariant(prog.difficulty)}
-                    />
-                  )}
-                </View>
-                {prog.description && (
-                  <Text style={styles.programDesc} numberOfLines={2}>
-                    {prog.description}
-                  </Text>
-                )}
-                <View style={styles.programMeta}>
-                  <View style={styles.metaItem}>
-                    <Ionicons name="calendar-outline" size={14} color={colors.textMuted} />
-                    <Text style={styles.metaText}>{prog.numWeeks} weeks</Text>
+          <>
+            <Text style={styles.sectionTitle}>All Programs</Text>
+            {programList.map((prog) => (
+              <HapticPressable
+                key={prog.id}
+                onPress={() => router.push(`/program/${prog.id}`)}
+              >
+                <Card style={styles.programCard} padding="md">
+                  <View style={styles.programHeader}>
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.programTitleRow}>
+                        <Text style={styles.programName}>{prog.name}</Text>
+                        {prog.isActive && (
+                          <Badge label="ACTIVE" variant="success" />
+                        )}
+                      </View>
+                      {prog.description && (
+                        <Text style={styles.programDesc} numberOfLines={1}>
+                          {prog.description}
+                        </Text>
+                      )}
+                    </View>
+                    <HapticPressable
+                      onPress={() => handleDeleteProgram(prog)}
+                    >
+                      <Ionicons
+                        name="trash-outline"
+                        size={18}
+                        color={colors.textMuted}
+                      />
+                    </HapticPressable>
                   </View>
-                  <View style={styles.metaItem}>
-                    <Ionicons name="repeat-outline" size={14} color={colors.textMuted} />
-                    <Text style={styles.metaText}>{prog.daysPerWeek} days/week</Text>
+                  <View style={styles.programMeta}>
+                    <View style={styles.metaItem}>
+                      <Ionicons
+                        name="repeat-outline"
+                        size={14}
+                        color={colors.textMuted}
+                      />
+                      <Text style={styles.metaText}>
+                        {prog.daysPerWeek} day{prog.daysPerWeek !== 1 ? 's' : ''}
+                      </Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Ionicons
+                        name="barbell-outline"
+                        size={14}
+                        color={colors.textMuted}
+                      />
+                      <Text style={styles.metaText}>
+                        {prog.exerciseCount} exercise{prog.exerciseCount !== 1 ? 's' : ''}
+                      </Text>
+                    </View>
+                    {prog.isActive && (
+                      <View style={styles.metaItem}>
+                        <Ionicons
+                          name="checkmark-circle-outline"
+                          size={14}
+                          color={colors.success}
+                        />
+                        <Text style={[styles.metaText, { color: colors.success }]}>
+                          {prog.totalWorkouts} done
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                </View>
-              </Card>
-            </HapticPressable>
-          ))
+                </Card>
+              </HapticPressable>
+            ))}
+          </>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -183,12 +300,23 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xxl,
     fontWeight: fontWeight.bold,
   },
+
+  // Active banner
   activeCard: {
     marginBottom: spacing.lg,
     borderColor: colors.success,
     borderWidth: 1,
   },
-  activeHeader: { marginBottom: spacing.sm },
+  activeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  activeWorkouts: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+  },
   activeName: {
     color: colors.text,
     fontSize: fontSize.xl,
@@ -199,30 +327,37 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
     marginTop: spacing.xs,
   },
-  continueButton: { marginTop: spacing.md },
+  viewButton: { marginTop: spacing.md },
+
+  // Section
   sectionTitle: {
     color: colors.text,
     fontSize: fontSize.lg,
     fontWeight: fontWeight.semibold,
     marginBottom: spacing.sm,
   },
+
+  // Program cards
   programCard: { marginBottom: spacing.sm },
   programHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  programTitleRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: spacing.sm,
   },
   programName: {
     color: colors.text,
     fontSize: fontSize.md,
     fontWeight: fontWeight.semibold,
-    flex: 1,
   },
   programDesc: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,
-    marginTop: spacing.xs,
-    lineHeight: 20,
+    marginTop: 2,
   },
   programMeta: {
     flexDirection: 'row',

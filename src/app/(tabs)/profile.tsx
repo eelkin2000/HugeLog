@@ -16,6 +16,7 @@ import { formatNumber, formatVolume, formatDuration } from '@/utils/formatting';
 export default function ProfileScreen() {
   const router = useRouter();
   const { unit, setUnit, chartSettings, setChartSettings } = useAppStore();
+  const [showSettings, setShowSettings] = useState(false);
   const [allTimeStats, setAllTimeStats] = useState({
     totalWorkouts: 0,
     totalVolume: 0,
@@ -107,172 +108,188 @@ export default function ProfileScreen() {
           </Card>
         </HapticPressable>
 
-        {/* Settings */}
-        <Text style={styles.sectionTitle}>Settings</Text>
+        {/* Settings toggle */}
+        <HapticPressable onPress={() => setShowSettings((v) => !v)}>
+          <Card style={styles.menuItem} padding="md">
+            <View style={styles.menuRow}>
+              <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
+              <Text style={styles.menuText}>Settings</Text>
+              <Ionicons
+                name={showSettings ? 'chevron-up' : 'chevron-down'}
+                size={20}
+                color={colors.textMuted}
+              />
+            </View>
+          </Card>
+        </HapticPressable>
 
-        <Card padding="md">
-          {/* Units */}
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Weight Unit</Text>
-            <View style={styles.unitToggle}>
-              <HapticPressable
-                onPress={() => setUnit('lb')}
-                style={[
-                  styles.unitButton,
-                  unit === 'lb' && styles.unitButtonActive,
-                ]}
-              >
-                <Text
+        {showSettings && (
+          <>
+            <Text style={styles.sectionTitle}>General</Text>
+            <Card padding="md">
+              {/* Units */}
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Weight Unit</Text>
+                <View style={styles.unitToggle}>
+                  <HapticPressable
+                    onPress={() => setUnit('lb')}
+                    style={[
+                      styles.unitButton,
+                      unit === 'lb' && styles.unitButtonActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.unitText,
+                        unit === 'lb' && styles.unitTextActive,
+                      ]}
+                    >
+                      lb
+                    </Text>
+                  </HapticPressable>
+                  <HapticPressable
+                    onPress={() => setUnit('kg')}
+                    style={[
+                      styles.unitButton,
+                      unit === 'kg' && styles.unitButtonActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.unitText,
+                        unit === 'kg' && styles.unitTextActive,
+                      ]}
+                    >
+                      kg
+                    </Text>
+                  </HapticPressable>
+                </View>
+              </View>
+            </Card>
+
+            <Text style={styles.sectionTitle}>Charts</Text>
+            <Card padding="md">
+              {/* Y Axis Divisions */}
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Y Axis Divisions</Text>
+                <View style={styles.stepperRow}>
+                  <HapticPressable
+                    onPress={() =>
+                      setChartSettings({ yTickCount: Math.max(2, chartSettings.yTickCount - 1) })
+                    }
+                    style={styles.stepperButton}
+                  >
+                    <Ionicons name="remove" size={16} color={colors.text} />
+                  </HapticPressable>
+                  <Text style={styles.stepperValue}>{chartSettings.yTickCount}</Text>
+                  <HapticPressable
+                    onPress={() =>
+                      setChartSettings({ yTickCount: Math.min(10, chartSettings.yTickCount + 1) })
+                    }
+                    style={styles.stepperButton}
+                  >
+                    <Ionicons name="add" size={16} color={colors.text} />
+                  </HapticPressable>
+                </View>
+              </View>
+
+              <View style={styles.settingDivider} />
+
+              {/* X Axis Labels */}
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>X Axis Labels</Text>
+                <View style={styles.stepperRow}>
+                  <HapticPressable
+                    onPress={() =>
+                      setChartSettings({ xTickCount: Math.max(2, chartSettings.xTickCount - 1) })
+                    }
+                    style={styles.stepperButton}
+                  >
+                    <Ionicons name="remove" size={16} color={colors.text} />
+                  </HapticPressable>
+                  <Text style={styles.stepperValue}>{chartSettings.xTickCount}</Text>
+                  <HapticPressable
+                    onPress={() =>
+                      setChartSettings({ xTickCount: Math.min(10, chartSettings.xTickCount + 1) })
+                    }
+                    style={styles.stepperButton}
+                  >
+                    <Ionicons name="add" size={16} color={colors.text} />
+                  </HapticPressable>
+                </View>
+              </View>
+
+              <View style={styles.settingDivider} />
+
+              {/* Grid Lines */}
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Grid Lines</Text>
+                <HapticPressable
+                  onPress={() => setChartSettings({ showGrid: !chartSettings.showGrid })}
                   style={[
-                    styles.unitText,
-                    unit === 'lb' && styles.unitTextActive,
+                    styles.toggleButton,
+                    chartSettings.showGrid && styles.toggleButtonActive,
                   ]}
                 >
-                  lb
-                </Text>
-              </HapticPressable>
-              <HapticPressable
-                onPress={() => setUnit('kg')}
-                style={[
-                  styles.unitButton,
-                  unit === 'kg' && styles.unitButtonActive,
-                ]}
-              >
-                <Text
+                  <Text
+                    style={[
+                      styles.toggleText,
+                      chartSettings.showGrid && styles.toggleTextActive,
+                    ]}
+                  >
+                    {chartSettings.showGrid ? 'ON' : 'OFF'}
+                  </Text>
+                </HapticPressable>
+              </View>
+
+              <View style={styles.settingDivider} />
+
+              {/* Show Y Labels */}
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Y Axis Labels</Text>
+                <HapticPressable
+                  onPress={() => setChartSettings({ showYLabels: !chartSettings.showYLabels })}
                   style={[
-                    styles.unitText,
-                    unit === 'kg' && styles.unitTextActive,
+                    styles.toggleButton,
+                    chartSettings.showYLabels && styles.toggleButtonActive,
                   ]}
                 >
-                  kg
-                </Text>
-              </HapticPressable>
-            </View>
-          </View>
-        </Card>
+                  <Text
+                    style={[
+                      styles.toggleText,
+                      chartSettings.showYLabels && styles.toggleTextActive,
+                    ]}
+                  >
+                    {chartSettings.showYLabels ? 'ON' : 'OFF'}
+                  </Text>
+                </HapticPressable>
+              </View>
 
-        {/* Chart Settings */}
-        <Text style={styles.sectionTitle}>Chart Settings</Text>
-        <Card padding="md">
-          {/* Y Axis Divisions */}
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Y Axis Divisions</Text>
-            <View style={styles.stepperRow}>
-              <HapticPressable
-                onPress={() =>
-                  setChartSettings({ yTickCount: Math.max(2, chartSettings.yTickCount - 1) })
-                }
-                style={styles.stepperButton}
-              >
-                <Ionicons name="remove" size={16} color={colors.text} />
-              </HapticPressable>
-              <Text style={styles.stepperValue}>{chartSettings.yTickCount}</Text>
-              <HapticPressable
-                onPress={() =>
-                  setChartSettings({ yTickCount: Math.min(10, chartSettings.yTickCount + 1) })
-                }
-                style={styles.stepperButton}
-              >
-                <Ionicons name="add" size={16} color={colors.text} />
-              </HapticPressable>
-            </View>
-          </View>
+              <View style={styles.settingDivider} />
 
-          <View style={styles.settingDivider} />
-
-          {/* X Axis Labels */}
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>X Axis Labels</Text>
-            <View style={styles.stepperRow}>
-              <HapticPressable
-                onPress={() =>
-                  setChartSettings({ xTickCount: Math.max(2, chartSettings.xTickCount - 1) })
-                }
-                style={styles.stepperButton}
-              >
-                <Ionicons name="remove" size={16} color={colors.text} />
-              </HapticPressable>
-              <Text style={styles.stepperValue}>{chartSettings.xTickCount}</Text>
-              <HapticPressable
-                onPress={() =>
-                  setChartSettings({ xTickCount: Math.min(10, chartSettings.xTickCount + 1) })
-                }
-                style={styles.stepperButton}
-              >
-                <Ionicons name="add" size={16} color={colors.text} />
-              </HapticPressable>
-            </View>
-          </View>
-
-          <View style={styles.settingDivider} />
-
-          {/* Grid Lines */}
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Grid Lines</Text>
-            <HapticPressable
-              onPress={() => setChartSettings({ showGrid: !chartSettings.showGrid })}
-              style={[
-                styles.toggleButton,
-                chartSettings.showGrid && styles.toggleButtonActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.toggleText,
-                  chartSettings.showGrid && styles.toggleTextActive,
-                ]}
-              >
-                {chartSettings.showGrid ? 'ON' : 'OFF'}
-              </Text>
-            </HapticPressable>
-          </View>
-
-          <View style={styles.settingDivider} />
-
-          {/* Show Y Labels */}
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Y Axis Labels</Text>
-            <HapticPressable
-              onPress={() => setChartSettings({ showYLabels: !chartSettings.showYLabels })}
-              style={[
-                styles.toggleButton,
-                chartSettings.showYLabels && styles.toggleButtonActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.toggleText,
-                  chartSettings.showYLabels && styles.toggleTextActive,
-                ]}
-              >
-                {chartSettings.showYLabels ? 'ON' : 'OFF'}
-              </Text>
-            </HapticPressable>
-          </View>
-
-          <View style={styles.settingDivider} />
-
-          {/* Show X Labels */}
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>X Axis Labels</Text>
-            <HapticPressable
-              onPress={() => setChartSettings({ showXLabels: !chartSettings.showXLabels })}
-              style={[
-                styles.toggleButton,
-                chartSettings.showXLabels && styles.toggleButtonActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.toggleText,
-                  chartSettings.showXLabels && styles.toggleTextActive,
-                ]}
-              >
-                {chartSettings.showXLabels ? 'ON' : 'OFF'}
-              </Text>
-            </HapticPressable>
-          </View>
-        </Card>
+              {/* Show X Labels */}
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>X Axis Labels</Text>
+                <HapticPressable
+                  onPress={() => setChartSettings({ showXLabels: !chartSettings.showXLabels })}
+                  style={[
+                    styles.toggleButton,
+                    chartSettings.showXLabels && styles.toggleButtonActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.toggleText,
+                      chartSettings.showXLabels && styles.toggleTextActive,
+                    ]}
+                  >
+                    {chartSettings.showXLabels ? 'ON' : 'OFF'}
+                  </Text>
+                </HapticPressable>
+              </View>
+            </Card>
+          </>
+        )}
 
         {/* App Info */}
         <View style={styles.appInfo}>

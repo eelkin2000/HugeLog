@@ -24,11 +24,11 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="programs"
+        name="history"
         options={{
-          title: 'Programs',
+          title: 'History',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="clipboard" size={size} color={color} />
+            <Ionicons name="calendar" size={size} color={color} />
           ),
         }}
       />
@@ -41,7 +41,7 @@ export default function TabLayout() {
               <Ionicons
                 name="add"
                 size={28}
-                color={focused ? colors.text : colors.text}
+                color={colors.text}
               />
             </View>
           ),
@@ -49,11 +49,11 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="history"
+        name="programs"
         options={{
-          title: 'History',
+          title: 'Programs',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="calendar" size={size} color={color} />
+            <Ionicons name="clipboard" size={size} color={color} />
           ),
         }}
       />

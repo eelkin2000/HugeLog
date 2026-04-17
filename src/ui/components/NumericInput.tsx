@@ -4,10 +4,37 @@ import {
   View,
   TextInput,
   Text,
+  Platform,
+  InputAccessoryView,
+  Keyboard,
   type ViewStyle,
 } from 'react-native';
 import { colors, spacing, radius, fontSize, fontWeight } from '@/ui/theme';
 import { HapticPressable } from './HapticPressable';
+
+const NUMERIC_DONE_ACCESSORY_ID = 'numericInputDone';
+
+/**
+ * Renders a Done toolbar above the iOS numeric keyboard. Mount this
+ * once near the root of the app (e.g. in _layout.tsx) and all
+ * NumericInputs will share it.
+ */
+export function NumericInputDoneBar() {
+  if (Platform.OS !== 'ios') return null;
+  return (
+    <InputAccessoryView nativeID={NUMERIC_DONE_ACCESSORY_ID}>
+      <View style={styles.accessoryBar}>
+        <HapticPressable
+          onPress={() => Keyboard.dismiss()}
+          scaleOnPress={false}
+          style={styles.accessoryDoneButton}
+        >
+          <Text style={styles.accessoryDoneText}>Done</Text>
+        </HapticPressable>
+      </View>
+    </InputAccessoryView>
+  );
+}
 
 interface NumericInputProps {
   value: number | null;
@@ -74,6 +101,11 @@ export function NumericInput({
           placeholderTextColor={colors.textMuted}
           keyboardType="numeric"
           selectTextOnFocus
+          returnKeyType="done"
+          blurOnSubmit
+          inputAccessoryViewID={
+            Platform.OS === 'ios' ? NUMERIC_DONE_ACCESSORY_ID : undefined
+          }
         />
       </HapticPressable>
     );
@@ -95,6 +127,11 @@ export function NumericInput({
           placeholderTextColor={colors.textMuted}
           keyboardType="numeric"
           selectTextOnFocus
+          returnKeyType="done"
+          blurOnSubmit
+          inputAccessoryViewID={
+            Platform.OS === 'ios' ? NUMERIC_DONE_ACCESSORY_ID : undefined
+          }
         />
         {suffix && <Text style={styles.suffix}>{suffix}</Text>}
       </View>
@@ -167,5 +204,26 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     padding: 0,
     width: '100%',
+  },
+
+  // iOS keyboard Done toolbar
+  accessoryBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  accessoryDoneButton: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  accessoryDoneText: {
+    color: colors.primary,
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.semibold,
   },
 });

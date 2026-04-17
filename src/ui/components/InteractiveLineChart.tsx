@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, LayoutChangeEvent } from 'react-native';
 import Svg, {
   Path,
@@ -29,6 +29,7 @@ export interface ChartDataPoint {
   date: string;
   label: string;
   value: number;
+  workoutId?: string;
 }
 
 export interface ChartAxisConfig {
@@ -54,6 +55,7 @@ interface InteractiveLineChartProps {
   formatValue?: (v: number) => string;
   axisConfig?: Partial<ChartAxisConfig>;
   height?: number;
+  onDataPointPress?: (workoutId: string) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -127,14 +129,22 @@ export function InteractiveLineChart({
   formatValue,
   axisConfig: axisConfigProp,
   height = 220,
+  onDataPointPress,
 }: InteractiveLineChartProps) {
   const axis = { ...DEFAULT_AXIS, ...axisConfigProp };
   const [containerWidth, setContainerWidth] = useState(0);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
+  // Ref tracks activeIndex reliably across gesture callbacks (avoids stale closure)
+  const activeIndexRef = useRef<number | null>(null);
+
   // Gesture shared values
   const touchX = useSharedValue(0);
   const isPressed = useSharedValue(false);
+  // Mirrors activeIndexRef for worklet access (refs aren't readable inside worklets)
+  const activeIndexShared = useSharedValue<number | null>(null);
+  // Whether a tooltip was visible at the START of the current pan gesture
+  const wasTooltipActive = useSharedValue(false);
 
   // Layout
   const Y_LABEL_WIDTH = axis.showYLabels ? 48 : 0;
@@ -211,35 +221,74 @@ export function InteractiveLineChart({
   const updateActive = useCallback(
     (x: number) => {
       const idx = findClosest(x);
+      activeIndexRef.current = idx;
+      activeIndexShared.value = idx;
       setActiveIndex(idx);
     },
     [findClosest],
   );
 
   const clearActive = useCallback(() => {
+    activeIndexRef.current = null;
+    activeIndexShared.value = null;
     setActiveIndex(null);
   }, []);
 
-  // Pan gesture for touch tracking
+  // Tap navigates only when the tooltip is already visible (user dragged to a point first).
+  // Uses the ref (not state) to avoid stale closure from RNGH gesture callbacks.
+  const handleTap = useCallback(() => {
+    const idx = activeIndexRef.current;
+    if (idx !== null) {
+      const dataPoint = validData[idx];
+      if (dataPoint?.workoutId && onDataPointPress) {
+        onDataPointPress(dataPoint.workoutId);
+      }
+      activeIndexRef.current = null;
+      setActiveIndex(null);
+    }
+    // No tooltip visible → do nothing
+  }, [validData, onDataPointPress]);
+
+  // Pan gesture: long press to activate, keep tooltip on release.
+  // Also handles "slow tap" navigation: if the tooltip was already visible when
+  // the user started pressing (wasTooltipActive) and they barely moved, treat it
+  // as a navigate tap — covering the case where their click exceeds the 150ms
+  // long-press threshold and the tap gesture loses the Race.
   const panGesture = Gesture.Pan()
     .activateAfterLongPress(150)
     .onStart((e) => {
       isPressed.value = true;
       touchX.value = e.x;
+      // Capture whether tooltip was showing BEFORE this press began
+      wasTooltipActive.value = activeIndexShared.value !== null;
       runOnJS(updateActive)(e.x);
     })
     .onUpdate((e) => {
       touchX.value = e.x;
       runOnJS(updateActive)(e.x);
     })
-    .onEnd(() => {
+    .onEnd((e) => {
       isPressed.value = false;
-      runOnJS(clearActive)();
+      // If tooltip was showing when press started and the user didn't drag
+      // (translationX < 20px), navigate — this is a "slow click" on the tooltip.
+      if (wasTooltipActive.value && Math.abs(e.translationX) < 20) {
+        runOnJS(handleTap)();
+      }
+      // Otherwise keep tooltip visible for a follow-up tap
     })
     .onFinalize(() => {
       isPressed.value = false;
-      runOnJS(clearActive)();
+      wasTooltipActive.value = false;
     });
+
+  // Tap gesture: navigate if tooltip is showing
+  const tapGesture = Gesture.Tap()
+    .onEnd(() => {
+      runOnJS(handleTap)();
+    });
+
+  // Race: quick tap wins; long press lets pan win
+  const composed = Gesture.Race(tapGesture, panGesture);
 
   // Not enough data
   if (validData.length < 2) {
@@ -278,7 +327,7 @@ export function InteractiveLineChart({
 
   return (
     <View style={[styles.chartContainer, { height }]} onLayout={onLayout}>
-      <GestureDetector gesture={panGesture}>
+      <GestureDetector gesture={composed}>
         <Animated.View style={{ width: '100%', height: '100%' }}>
           <Svg width={containerWidth} height={height}>
             <Defs>

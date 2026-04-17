@@ -7,6 +7,7 @@ import { initDatabase } from '@/db/init';
 import { seedExercises } from '@/db/seed/exercises';
 import { seedMockWorkouts } from '@/db/seed/mockWorkouts';
 import { colors } from '@/ui/theme';
+import { NumericInputDoneBar } from '@/ui/components/NumericInput';
 
 export default function RootLayout() {
   const [isReady, setIsReady] = useState(false);
@@ -50,10 +51,13 @@ export default function RootLayout() {
         <Stack.Screen name="workout/[id]" />
         <Stack.Screen name="exercise/[id]" />
         <Stack.Screen name="exercise/browse" options={{ animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="exercise/create" options={{ animation: 'slide_from_bottom' }} />
         <Stack.Screen name="program/[id]" />
         <Stack.Screen name="program/create" options={{ animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="program/edit-day" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="analytics/index" />
       </Stack>
+      <NumericInputDoneBar />
     </GestureHandlerRootView>
   );
 }

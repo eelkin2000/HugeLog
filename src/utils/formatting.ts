@@ -63,3 +63,12 @@ export function formatRepsTarget(target: string): string {
 export function formatVolume(volume: number, unit: WeightUnit = 'lb'): string {
   return `${formatNumber(Math.round(volume))} ${unit}`;
 }
+
+/**
+ * Format a number with ordinal suffix: 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 4 -> "4th".
+ */
+export function ordinalSuffix(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}

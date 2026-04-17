@@ -42,6 +42,8 @@ interface ActiveWorkoutState {
   updateSet: (workoutExerciseId: string, setId: string, updates: Partial<ActiveSet>) => void;
   removeSet: (workoutExerciseId: string, setId: string) => void;
   completeSet: (workoutExerciseId: string, setId: string) => void;
+  uncompleteSet: (workoutExerciseId: string, setId: string) => void;
+  setExerciseRestSeconds: (workoutExerciseId: string, seconds: number) => void;
   startRestTimer: (duration: number) => void;
   clearRestTimer: () => void;
 }
@@ -133,6 +135,27 @@ export const useActiveWorkoutStore = create<ActiveWorkoutState>((set) => ({
               ),
             }
           : e
+      ),
+    })),
+
+  uncompleteSet: (workoutExerciseId, setId) =>
+    set((state) => ({
+      exercises: state.exercises.map((e) =>
+        e.id === workoutExerciseId
+          ? {
+              ...e,
+              sets: e.sets.map((s) =>
+                s.id === setId ? { ...s, isCompleted: false, isPersonalRecord: false } : s
+              ),
+            }
+          : e
+      ),
+    })),
+
+  setExerciseRestSeconds: (workoutExerciseId, seconds) =>
+    set((state) => ({
+      exercises: state.exercises.map((e) =>
+        e.id === workoutExerciseId ? { ...e, restSeconds: seconds } : e
       ),
     })),
 

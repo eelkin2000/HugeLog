@@ -17,7 +17,9 @@
       "Bash(xargs grep:*)",
       "Bash(xargs wc:*)",
       "WebSearch",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(findstr /A 5 \"scripts\")",
+      "Bash(git diff:*)"
     ]
   }
 }

@@ -13,6 +13,7 @@ interface ProgressionChartProps {
   color?: string;
   formatValue?: (v: number) => string;
   axisConfig?: Partial<ChartAxisConfig>;
+  onDataPointPress?: (workoutId: string) => void;
 }
 
 export function ProgressionChart({
@@ -22,6 +23,7 @@ export function ProgressionChart({
   color = colors.primary,
   formatValue,
   axisConfig,
+  onDataPointPress,
 }: ProgressionChartProps) {
   const validData = data.filter((d) => d.value > 0);
 
@@ -65,6 +67,7 @@ export function ProgressionChart({
         formatValue={formatValue}
         axisConfig={axisConfig}
         height={220}
+        onDataPointPress={onDataPointPress}
       />
     </View>
   );
@@ -78,6 +81,7 @@ interface ProgressionChartGroupProps {
   volumeData: ProgressionDataPoint[];
   unit: string;
   axisConfig?: Partial<ChartAxisConfig>;
+  onDataPointPress?: (workoutId: string) => void;
 }
 
 export function ProgressionChartGroup({
@@ -86,6 +90,7 @@ export function ProgressionChartGroup({
   volumeData,
   unit,
   axisConfig,
+  onDataPointPress,
 }: ProgressionChartGroupProps) {
   const [range, setRange] = useState<TimeRange>('90d');
 
@@ -138,6 +143,7 @@ export function ProgressionChartGroup({
         unit={unit}
         color={colors.primary}
         axisConfig={axisConfig}
+        onDataPointPress={onDataPointPress}
       />
       <ProgressionChart
         title="Estimated 1RM"
@@ -145,6 +151,7 @@ export function ProgressionChartGroup({
         unit={unit}
         color={colors.secondary}
         axisConfig={axisConfig}
+        onDataPointPress={onDataPointPress}
       />
       <ProgressionChart
         title="Session Volume"
@@ -153,6 +160,7 @@ export function ProgressionChartGroup({
         color={colors.success}
         formatValue={formatVolume}
         axisConfig={axisConfig}
+        onDataPointPress={onDataPointPress}
       />
     </View>
   );
